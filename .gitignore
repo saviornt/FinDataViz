@@ -579,3 +579,5 @@ abstract.log*
 abstract.record*
 secring.*
 local_vars.py
+creds/
+
