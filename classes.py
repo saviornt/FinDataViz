@@ -1,7 +1,8 @@
+import datetime as dt
 import pandas as pd
 import pandas_datareader as pdr
+import requests
 import talib as ta
-import datetime as dt
 from sklearn.impute import KNNImputer
 
 
@@ -42,9 +43,44 @@ class Securities:
         df = Securities.cleanup_dataframe(df)
         return df
 
+    @staticmethod
+    def get_fred_data(codes, start_date, end_date):
+        start = dt.datetime.strptime(start_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+        end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+        df = pdr.DataReader(code, 'fred', start, end)
+        return df
 
-def get_fred_data(code, start_date, end_date):
-    start = dt.datetime.strptime(start_date, "%m/%d/%Y").strftime("%Y-%m-%d")
-    end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
-    df = pdr.DataReader(code, 'fred', start, end)
-    return df
+    @staticmethod
+    def get_census_data(census_code, reports, start_year, end_year, api_key):
+        if reports == 'monthly':
+            report = '01'
+        if reports == 'quarterly':
+            report = 'Q1'
+        base_url = "https://api.census.gov/data/timeseries/eits/{}?".format(census_code)
+        param_url = "get=cell_value,time_slot_id,error_data,category_code&for&seasonally_adj&data_type_code&"
+        time_url = "time=from+{}-{}+to+{}-{}&key={}".format(start_year, report, end_year, report, api_key)
+        url = base_url + param_url + time_url
+        response = requests.request('GET', url)
+
+        df = pd.DataFrame(response.json()[1:], columns=response.json()[0])
+        df = df.drop(columns=['time_slot_id', 'error_data', 'category_code', 'seasonally_adj', 'data_type_code'])
+        new_data = {}
+        df_duplicates = df[df.duplicated('time')]
+        duplicate_rows = 1
+        while duplicate_rows > 0:
+            try:
+                date = df_duplicates['time'].iloc[0]
+                df_date = df.loc[df['time'] == date]
+                revenue_list = df_date['cell_value'].values.tolist()
+                revenue_list = [eval(i) for i in revenue_list]
+                rev = int(sum(revenue_list))
+                new_data.update({date: rev})
+                df_duplicates = df_duplicates[df.time != date]
+                duplicate_rows = df_duplicates.duplicated().sum()
+            except Exception as e:
+                print(e)
+                break
+        df2 = pd.DataFrame.from_dict(new_data, orient='index')
+        df2.index.name = "Date"
+        df2 = df2.rename(columns={0: census_code.upper() + " Revenue"})
+        return df2
