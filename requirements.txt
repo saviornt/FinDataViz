@@ -1,0 +1,14 @@
+yfinance
+google-cloud-bigquery
+pandas==1.5.0
+pandas_gbq
+pandas-profiling
+TA-Lib
+numpy
+scipy
+statsmodels
+Nasdaq-Data-Link
+zipline-reloaded
+pyfolio
+plotly==5.10.0
+dash
