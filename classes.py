@@ -4,10 +4,54 @@ import pandas_datareader as pdr
 import requests
 import talib as ta
 from sklearn.impute import KNNImputer
+from census_parameters import census_dictionary
 
 
-class Securities:
+class GetData:
 
+    @staticmethod
+    def get_security_info(symbol, start_date, end_date):
+        df = pdr.get_data_yahoo(symbols=symbol, start=start_date, end=end_date)
+        df['Avg Price'] = ta.AVGPRICE(df['Open'], df['High'], df['Low'], df['Close'], )
+        df['SMA'] = ta.SMA(df['Close'], timeperiod=5)
+        df['EMA'] = ta.EMA(df['Close'], timeperiod=5)
+        df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
+        df['ADX'] = ta.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
+        df = CleanData.cleanup_dataframe(df)
+        return df
+
+    @staticmethod
+    def get_fred_data(code, start_date, end_date):
+        start = dt.datetime.strptime(start_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+        end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+        df = pdr.DataReader(code, 'fred', start, end)
+        return df
+
+    @staticmethod
+    def get_census_data(census_code, start_date, end_date, api_key):
+        start_month = start_date.dt.datetime.strftime("%m")
+        start_year = start_date.dt.datetime.strftime("%Y")
+        end_month = end_date.dt.datetime.strftime("%m")
+        end_year = end_date.dt.datetime.strftime("%Y")
+
+        reports = (census_dictionary[census_code])[1]
+        if reports == 'quarterly':
+            start_month = CleanData.month2quarter(start_month)
+            end_month = CleanData.month2quarter(end_month)
+
+        base_url = "https://api.census.gov/data/timeseries/eits/{}?".format(census_code)
+        param_url = "get=cell_value,time_slot_id,error_data,category_code&for&seasonally_adj&data_type_code&"
+        time_url = "time=from+{}-{}+to+{}-{}&key={}".format(start_year, start_month, end_year, end_month, api_key)
+        url = base_url + param_url + time_url
+        response = requests.request('GET', url)
+
+        df = pd.DataFrame(response.json()[1:], columns=response.json()[0])
+        df = df.drop(columns=['time_slot_id', 'error_data', 'category_code', 'seasonally_adj', 'data_type_code'])
+        df = CleanData.total_report_date_revenue(df, census_code)
+        return df
+
+
+class CleanData:
     @staticmethod
     def cleanup_dataframe(df):
         df = df.dropna()
@@ -33,37 +77,19 @@ class Securities:
         return df
 
     @staticmethod
-    def get_security_info(symbol, start_date, end_date):
-        df = pdr.get_data_yahoo(symbols=symbol, start=start_date, end=end_date)
-        df['Avg Price'] = ta.AVGPRICE(df['Open'], df['High'], df['Low'], df['Close'], )
-        df['SMA'] = ta.SMA(df['Close'], timeperiod=5)
-        df['EMA'] = ta.EMA(df['Close'], timeperiod=5)
-        df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
-        df['ADX'] = ta.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df = Securities.cleanup_dataframe(df)
-        return df
+    def month2quarter(month):
+        if month <= 3:
+            quarter = 'Q1'
+        elif (month <= 6) and (month >= 4):
+            quarter = 'Q2'
+        elif (month <= 9) and (month >= 5):
+            quarter = 'Q3'
+        elif (month <= 12) and (month >= 9):
+            quarter = 'Q4'
+        return quarter
 
     @staticmethod
-    def get_fred_data(codes, start_date, end_date):
-        start = dt.datetime.strptime(start_date, "%m/%d/%Y").strftime("%Y-%m-%d")
-        end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
-        df = pdr.DataReader(code, 'fred', start, end)
-        return df
-
-    @staticmethod
-    def get_census_data(census_code, reports, start_year, end_year, api_key):
-        if reports == 'monthly':
-            report = '01'
-        if reports == 'quarterly':
-            report = 'Q1'
-        base_url = "https://api.census.gov/data/timeseries/eits/{}?".format(census_code)
-        param_url = "get=cell_value,time_slot_id,error_data,category_code&for&seasonally_adj&data_type_code&"
-        time_url = "time=from+{}-{}+to+{}-{}&key={}".format(start_year, report, end_year, report, api_key)
-        url = base_url + param_url + time_url
-        response = requests.request('GET', url)
-
-        df = pd.DataFrame(response.json()[1:], columns=response.json()[0])
-        df = df.drop(columns=['time_slot_id', 'error_data', 'category_code', 'seasonally_adj', 'data_type_code'])
+    def total_report_date_revenue(df, census_code):
         new_data = {}
         df_duplicates = df[df.duplicated('time')]
         duplicate_rows = 1
@@ -80,7 +106,17 @@ class Securities:
             except Exception as e:
                 print(e)
                 break
-        df2 = pd.DataFrame.from_dict(new_data, orient='index')
-        df2.index.name = "Date"
-        df2 = df2.rename(columns={0: census_code.upper() + " Revenue"})
-        return df2
+        df = pd.DataFrame.from_dict(new_data, orient='index')
+        df.index.name = "Date"
+        df = df.rename(columns={0: census_code.upper() + " Revenue"})
+        return df
+
+
+class BigQueryMethods:
+    """
+    TODO Create DOCSTRING
+    TODO Create, Copy, Delete Dataset
+    TODO Create, Copy, Delete Table in a Dataset
+    TODO Load data into table
+    TODO Get data from table
+    """

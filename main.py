@@ -1,5 +1,6 @@
-import classes, config
 import pandas as pd
+import classes
+import config
 import fred_dictionary as fd
 
 config.set_env_variables()
@@ -18,6 +19,6 @@ end_year = "2022"
 fred_dictionary = fd.fred_dictionary
 fred_codes = fred_dictionary.keys()
 
-stock_data = classes.Securities.get_security_info(symbol, start_date, end_date)
-fred_data = classes.Securities.get_fred_data(fred_codes, start_date, end_date)
-census_vip_data = classes.Securities.get_census_data(census_code, reports, start_year, end_year, census_api_key)
+stock_data = classes.GetData.get_security_info(symbol, start_date, end_date)
+fred_data = classes.GetData.get_fred_data(fred_codes, start_date, end_date)
+census_vip_data = classes.GetData.get_census_data(census_code, reports, start_year, end_year, census_api_key)
