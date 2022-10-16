@@ -1,6 +1,7 @@
 import datetime as dt
 import logging
 from datetime import timedelta
+from dateutil import relativedelta
 
 import pandas as pd
 import pandas_datareader as pdr
@@ -41,6 +42,10 @@ class GetData:
         end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
         df = pdr.DataReader(code, 'fred', start, end)
         df = CleanData.cleanup_dataframe_ML(df)
+        df['RSI'] = ta.RSI(df[df.columns[0]], timeperiod=14)
+        x = df.loc[df['Date'] == start_date].index[0]
+        df = df.iloc[x:]
+        df.set_index('Date')
         return df
 
     @staticmethod
@@ -65,6 +70,10 @@ class GetData:
         df = pd.DataFrame(response.json()[1:], columns=response.json()[0])
         df = df.drop(columns=['time_slot_id', 'error_data', 'category_code', 'seasonally_adj', 'data_type_code'])
         df = CleanData.total_report_date_revenue(df, census_code)
+        df['RSI'] = ta.RSI(df[df.columns[0]], timeperiod=14)
+        x = df.loc[df['Date'] == start_date].index[0]
+        df = df.iloc[x:]
+        df.set_index('Date')
         return df
 
     @staticmethod
@@ -122,8 +131,8 @@ class CleanData:
 
     @staticmethod
     def month2quarter(month):
+        month = int(month)
         quarter = ''
-        month = month.upper()  # Validate and correct input to uppercase
         if month <= 3:
             quarter = 'Q1'
         elif (month <= 6) and (month >= 4):
@@ -144,6 +153,11 @@ class CleanData:
                 date = df_duplicates['time'].iloc[0]
                 df_date = df.loc[df['time'] == date]
                 revenue_list = df_date['cell_value'].values.tolist()
+                rev_copy = []
+                for i in revenue_list:
+                    if i != "(S)":
+                        rev_copy.append(i)
+                revenue_list = rev_copy
                 revenue_list = [eval(i) for i in revenue_list]
                 rev = int(sum(revenue_list))
                 new_data.update({date: rev})
@@ -330,7 +344,7 @@ class BigQueryMethods:
 
 class Graphs:
     @staticmethod
-    def create_stock_market_graph(security_dataframe, symbol):
+    def create_market_graph(security_dataframe, symbol):
         security_dataframe.reset_index(inplace=True)
         price_min_range = security_dataframe['Avg Price'].min()
         price_min_range = price_min_range - (price_min_range * 0.05)
