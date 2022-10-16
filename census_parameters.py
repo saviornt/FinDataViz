@@ -15,3 +15,8 @@ census_dictionary = {
     "qfr": ["Quarterly Financial Report", "quarterly"],
     "bfs": ["Business Formation Statistics", "quarterly"]
 }
+
+
+def get_census_codes():
+    census_codes = census_dictionary.keys()
+    return census_codes

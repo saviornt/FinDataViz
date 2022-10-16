@@ -11,7 +11,14 @@ from google.cloud import bigquery, bigquery_datatransfer
 from sklearn.impute import KNNImputer
 
 import config
+import fred_parameters
+import census_parameters
+import market_parameters
 from census_parameters import census_dictionary
+
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 class GetData:
@@ -37,7 +44,8 @@ class GetData:
         return df
 
     @staticmethod
-    def get_census_data(census_code, start_date, end_date, api_key):
+    def get_census_data(census_code, start_date, end_date):
+        api_key = config.census_api_key
         start_month = start_date.dt.datetime.strftime("%m")
         start_year = start_date.dt.datetime.strftime("%Y")
         end_month = end_date.dt.datetime.strftime("%m")
@@ -58,6 +66,33 @@ class GetData:
         df = df.drop(columns=['time_slot_id', 'error_data', 'category_code', 'seasonally_adj', 'data_type_code'])
         df = CleanData.total_report_date_revenue(df, census_code)
         return df
+
+    @staticmethod
+    def get_market_data(start_date, end_date):
+        market_data = {}
+        ticker_symbols = market_parameters.get_market_symbols()
+        for symbol in ticker_symbols:
+            df = GetData.get_security_info(symbol, start_date, end_date)
+            market_data.update({symbol: df})
+        return market_data
+
+    @staticmethod
+    def get_total_fred_data(start_date, end_date):
+        fred_data = {}
+        fred_codes = fred_parameters.get_fred_codes()
+        for code in fred_codes:
+            df = GetData.get_fred_data(code, start_date, end_date)
+            fred_data.update({code: df})
+        return fred_data
+
+    @staticmethod
+    def get_total_census_data(start_date, end_date):
+        census_data = {}
+        census_codes = census_parameters.get_census_codes()
+        for census_code in census_codes:
+            df = GetData.get_census_data(census_code, start_date, end_date)
+            census_data.update({census_code: df})
+        return census_data
 
 
 class CleanData:
@@ -291,3 +326,58 @@ class BigQueryMethods:
         project_id = config.project_id
         df = pb.read_gbq(sql_statement, project_id)
         return df
+
+
+class Graphs:
+    @staticmethod
+    def create_stock_market_graph(security_dataframe, symbol):
+        security_dataframe.reset_index(inplace=True)
+        price_min_range = security_dataframe['Avg Price'].min()
+        price_min_range = price_min_range - (price_min_range * 0.05)
+
+        price_max_range = security_dataframe['Avg Price'].max()
+        price_max_range = price_max_range + (price_max_range * 0.05)
+
+        # Create subplots and grid sizes
+        fig_prices = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                                   subplot_titles=(
+                                       'Price Movement', 'Volume of Shares Traded & Relative Strength Index',
+                                       'Average Directional Index'), row_width=[0.3, 0.3, 0.3],
+                                   specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}]])
+
+        # Plot the OHLC Candlesticks
+        fig_prices.add_trace(go.Candlestick(x=security_dataframe['Date'],
+                                            open=security_dataframe['Open'],
+                                            high=security_dataframe['High'],
+                                            low=security_dataframe['Low'],
+                                            close=security_dataframe['Close'],
+                                            name='OHLC Candlesticks'), row=1, col=1, secondary_y=False)
+
+        # Add the Moving Averages to the top graph
+        fig_prices.add_scatter(x=security_dataframe['Date'],
+                               y=security_dataframe['SMA'], mode='lines',
+                               name='Simple Moving Average', row=1, col=1)
+
+        fig_prices.add_scatter(x=security_dataframe['Date'],
+                               y=security_dataframe['EMA'], mode='lines',
+                               name='Exponential Moving Average', row=1, col=1)
+
+        # Add the volume bars and RSI on the second row without adding it to the legend
+
+        fig_prices.add_trace(go.Bar(x=security_dataframe['Date'], y=security_dataframe['Volume'],
+                                    showlegend=False), row=2, col=1, secondary_y=False)
+
+        # Add the RSI indicator to the third row without adding to the legend
+        fig_prices.add_trace(go.Scatter(x=security_dataframe['Date'], y=security_dataframe['RSI'],
+                                        showlegend=False), row=2, col=1, secondary_y=True)
+
+        # Add the ADX indicator to the third row without adding to the legend
+        fig_prices.add_trace(go.Scatter(x=security_dataframe['Date'], y=security_dataframe['ADX'],
+                                        showlegend=False), row=3, col=1)
+
+        fig_prices.update_layout(title='Stock Market History for {}'.format(symbol.upper()), yaxis_title='Price Range',
+                                 autosize=True)
+
+        fig_prices.update(layout_xaxis_rangeslider_visible=False)
+        fig_prices.show()
+        return

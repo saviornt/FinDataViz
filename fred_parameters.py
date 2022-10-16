@@ -40,4 +40,10 @@ fred_dictionary = {
     "DCOILWTICO": "Crude Oil Prices",
     "USSLIND": "Leading Index for the United State",
     "DTWEXM": "Trade Weighted U.S. Dollar Index: Major Currencies",
-    "DTWEXB": "Trade Weighted U.S. Dollar Index: Broad"}
+    "DTWEXB": "Trade Weighted U.S. Dollar Index: Broad"
+}
+
+
+def get_fred_codes():
+    fred_codes = fred_dictionary.keys()
+    return fred_codes
