@@ -1,9 +1,16 @@
 import datetime as dt
+import logging
+from datetime import timedelta
+
 import pandas as pd
 import pandas_datareader as pdr
+import pandas_gbq as pb
 import requests
 import talib as ta
+from google.cloud import bigquery, bigquery_datatransfer
 from sklearn.impute import KNNImputer
+
+import config
 from census_parameters import census_dictionary
 
 
@@ -11,13 +18,14 @@ class GetData:
 
     @staticmethod
     def get_security_info(symbol, start_date, end_date):
+        start_date = CleanData.get_previous_days(start_date, 45)
         df = pdr.get_data_yahoo(symbols=symbol, start=start_date, end=end_date)
         df['Avg Price'] = ta.AVGPRICE(df['Open'], df['High'], df['Low'], df['Close'], )
         df['SMA'] = ta.SMA(df['Close'], timeperiod=5)
         df['EMA'] = ta.EMA(df['Close'], timeperiod=5)
         df['RSI'] = ta.RSI(df['Close'], timeperiod=14)
         df['ADX'] = ta.ADX(df['High'], df['Low'], df['Close'], timeperiod=14)
-        df = CleanData.cleanup_dataframe(df)
+        df = df.iloc[45 - 14:]
         return df
 
     @staticmethod
@@ -25,6 +33,7 @@ class GetData:
         start = dt.datetime.strptime(start_date, "%m/%d/%Y").strftime("%Y-%m-%d")
         end = dt.datetime.strptime(end_date, "%m/%d/%Y").strftime("%Y-%m-%d")
         df = pdr.DataReader(code, 'fred', start, end)
+        df = CleanData.cleanup_dataframe_ML(df)
         return df
 
     @staticmethod
@@ -78,6 +87,8 @@ class CleanData:
 
     @staticmethod
     def month2quarter(month):
+        quarter = ''
+        month = month.upper()  # Validate and correct input to uppercase
         if month <= 3:
             quarter = 'Q1'
         elif (month <= 6) and (month >= 4):
@@ -111,12 +122,172 @@ class CleanData:
         df = df.rename(columns={0: census_code.upper() + " Revenue"})
         return df
 
+    @staticmethod
+    def get_previous_days(date_string, amount_of_days):
+        date_string = dt.datetime.strptime(date_string, '%m/%d/%Y').date()
+        date_string = date_string - timedelta(days=amount_of_days)
+        date_string = date_string.strftime('%m/%d/%Y')
+        return date_string
+
 
 class BigQueryMethods:
     """
     TODO Create DOCSTRING
-    TODO Create, Copy, Delete Dataset
-    TODO Create, Copy, Delete Table in a Dataset
-    TODO Load data into table
-    TODO Get data from table
     """
+
+    @staticmethod
+    def create_dataset(dataset_name, dataset_location):
+        client = bigquery.Client()
+        dataset_id = "{}.dataset_name".format(client.project)
+        dataset = bigquery.Dataset(dataset_id)
+        dataset_location = dataset_location
+        try:
+            dataset = client.create_dataset(dataset, timeout=30)
+        except BaseException as e:
+            logging.error(e)
+
+        # Set a table expiration timeframe to never expire
+        dataset = client.get_dataset(dataset_id)
+        dataset.default_table_expiration_ms = 'Never'
+        dataset = client.update_dataset(dataset, ["default_table_expiration_ms"])
+        return
+
+    @staticmethod
+    def copy_dataset(source_dataset_name, destination_dataset_name):
+        project_id = config.project_id
+        transfer_client = bigquery_datatransfer.DataTransferServiceClient()
+
+        source_project_id = destination_project_id = project_id
+        source_dataset_id = source_dataset_name
+        destination_dataset_id = destination_dataset_name
+
+        transfer_config = bigquery_datatransfer.TransferConfig(
+            destination_dataset_id=destination_dataset_id,
+            display_name="Your Dataset Copy Name",
+            data_source_id="cross_region_copy",
+            params={
+                "source_project_id": source_project_id,
+                "source_dataset_id": source_dataset_id,
+            },
+            schedule="every 24 hours",
+        )
+        transfer_config = transfer_client.create_transfer_config(
+            parent=transfer_client.common_project_path(destination_project_id),
+            transfer_config=transfer_config,
+        )
+        return
+
+    @staticmethod
+    def list_datasets():
+        client = bigquery.Client()
+        datasets = list(client.list_datasets())
+        return datasets
+
+    @staticmethod
+    def delete_dataset(dataset_name, ):
+        project_id = config.project_id
+        client = bigquery.Client()
+        dataset_id = '{}.{}'.format(project_id, dataset_name)
+        client.delete_dataset(dataset_id, delete_contents=True, not_found_ok=True)
+        return
+
+    @staticmethod
+    def create_schema_fields(number_of_fields: int):
+        fields = []
+        for f in range(number_of_fields):
+            field_name = input('Field name: ')
+            field_type = input('Field type: ')
+            field_mode = input('Field mode: ')
+            field_mode = "mode={}".format(field_mode)
+            field = "{}, {}, {}".format(field_name, field_type, field_mode)
+            fields.append([field])
+        return fields
+
+    @staticmethod
+    def create_schema(fields: list):
+        schema = []
+        for f in fields:
+            schema.append = [bigquery.SchemaField(f)]
+        return schema
+
+    @staticmethod
+    def create_table(dataset_name, table_name, schema: list = None):
+        client = bigquery.Client()
+        project_id = config.project_id
+        table_id = "{}.{}.{}".format(project_id, dataset_name, table_name)
+        if schema is None:
+            table = bigquery.Table(table_id)
+        else:
+            table = bigquery.Table(table_id, schema=schema)
+
+        table = client.create_table(table)
+        return
+
+    @staticmethod
+    def create_table_from_dataframe(dataframe, dataset_name, table_name, table_expiration='Never',
+                                    table_description=''):
+        project_id = config.project_id
+        table_id = '{}.{}'.format(dataset_name, table_name)
+        pb.to_gbq(dataframe, table_id, project_id)
+
+        if table_description is not None:
+            BigQueryMethods.set_table_description(dataset_name, table_name, table_description)
+
+        if table_expiration is not 'Never':
+            BigQueryMethods.set_table_expiration(dataset_name, table_name, table_expiration)
+
+        return
+
+    @staticmethod
+    def set_table_description(dataset_name, table_name, table_description):
+        client = bigquery.Client()
+        project_id = config.project_id
+        dataset_ref = bigquery.DatasetReference(project_id, dataset_name)
+        table_ref = dataset_ref.table(table_name)
+        table = client.get_table(table_ref)
+        table.description = table_description
+        table = client.update_table((table, ["description"]))
+        return
+
+    @staticmethod
+    def set_table_expiration(dataset_name, table_name, table_expiration='Never'):
+        client = bigquery.Client()
+        project = client.project
+        dataset_ref = bigquery.DatasetReference(project, dataset_name)
+        table_ref = dataset_ref.table(table_name)
+        table = client.get_table(table_ref)
+        if table_expiration is not 'Never':
+            table_expiration = dt.datetime.now(dt.timezone.utc) + timedelta(days=5)
+        table.expires = table_expiration
+        table = client.update_table(table, ["expires"])
+        return
+
+    @staticmethod
+    def copy_table(source_dataset_name, source_table_name, destination_dataset_name, destination_table_name):
+        project_id = config.project_id
+        client = bigquery.Client()
+        source_table = '{}.{}.{}'.format(project_id, source_dataset_name, source_table_name)
+        destination_table = '{}.{}.{}'.format(project_id, destination_dataset_name, destination_table_name)
+        job = client.copy_table(source_table, destination_table)
+        job.result()
+        return
+
+    @staticmethod
+    def delete_table(dataset_name, table_name):
+        project_id = config.project_id
+        client = bigquery.Client()
+        table_id = '{}.{}.{}'.format(project_id, dataset_name, table_name)
+        client.delete_table(table_id, not_found_ok=True)
+        return
+
+    @staticmethod
+    def append_table_data(df, dataset_name, table_name):
+        project_id = config.project_id
+        pb.to_gbq(df, dataset_name, table_name, if_exists='append')
+        return
+
+    @staticmethod
+    def get_table_data(dataset_name, table_name, sql_statement):
+        project_id = config.project_id
+        df = pb.read_gbq(sql_statement, project_id)
+        return df
