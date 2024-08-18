@@ -3,7 +3,7 @@ symbol_dictionary = {
     'SPY': 'S&P-500 Index ETF',
     'QQQ': 'NASDAQ-100 Index ETF',
     'VTI': 'Vanguard Total Stock Market Index',
-    'VIX': 'CBOE Volatility Index'
+    '^VIX': 'CBOE Volatility Index'
 }
 
 
